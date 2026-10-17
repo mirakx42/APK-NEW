@@ -1,0 +1,85 @@
+name: Compiler l'APK MirakX Store
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  apk:
+    name: Compiler l'application Android
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Recuperer les fichiers
+        uses: actions/checkout@v4
+
+      - name: Trouver la racine du projet
+        id: racine
+        run: |
+          set -e
+          DIR=$(dirname "$(find . -name settings.gradle | head -1)")
+          echo "Racine detectee : $DIR"
+          echo "dir=$DIR" >> "$GITHUB_OUTPUT"
+
+      - name: Verifier les fichiers indispensables
+        run: |
+          set -e
+          cd "${{ steps.racine.outputs.dir }}"
+          for f in settings.gradle build.gradle app/build.gradle \
+                   app/src/main/AndroidManifest.xml \
+                   app/src/main/assets/index.html \
+                   app/src/main/java/dz/mirakx/store/MainActivity.java; do
+            if [ -f "$f" ]; then echo "OK      $f"; else echo "MANQUE  $f"; exit 1; fi
+          done
+          echo "Taille de l'application :"
+          du -h app/src/main/assets/index.html
+          echo "Icones :"
+          find app/src/main/res -name "ic_launcher.png" | wc -l
+
+      - name: Installer Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Installer le SDK Android
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-34 build-tools;34.0.0'
+
+      - name: Installer Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Compiler
+        run: |
+          cd "${{ steps.racine.outputs.dir }}"
+          gradle assembleDebug --no-daemon --stacktrace
+
+      - name: Afficher l'erreur si la compilation echoue
+        if: failure()
+        run: |
+          cd "${{ steps.racine.outputs.dir }}"
+          echo "===== Contenu du projet ====="
+          find . -maxdepth 4 -type f -name "*.gradle" -o -maxdepth 4 -name "AndroidManifest.xml" | head -20
+          echo "===== Journal Gradle ====="
+          gradle assembleDebug --no-daemon --info 2>&1 | tail -80 || true
+
+      - name: Preparer le fichier final
+        run: |
+          set -e
+          mkdir -p sortie
+          find "${{ steps.racine.outputs.dir }}/app/build/outputs/apk" -name "*.apk" -exec cp {} sortie/ \;
+          if [ -f sortie/app-debug.apk ]; then mv sortie/app-debug.apk sortie/MirakX-Store.apk; fi
+          echo "APK produit :"
+          ls -lh sortie/
+
+      - name: Publier l'APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: MirakX-Store-APK
+          path: sortie/*.apk
+          if-no-files-found: error
+          retention-days: 90
